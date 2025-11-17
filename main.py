@@ -18,7 +18,7 @@ models  # silence lint
 from database import Base
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Finance API (advanced starter)")
+app = FastAPI(title="Finance API (advanced starter)",  redirect_slashes=False)
 
 app.include_router(auth_router.router)
 app.include_router(category_router.router)

@@ -15,6 +15,9 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 hari
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+handler = pwd_context.handler("bcrypt")
+
+print(handler.name, handler.backends)
 
 def get_db():
     db = SessionLocal()

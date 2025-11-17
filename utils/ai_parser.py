@@ -70,6 +70,32 @@ def _rule_based_parse(text: str) -> Dict[str, Any]:
         words = re.findall(r"\w+", text)
         title = " ".join(words[:6]) if words else text
 
+    # Auto-detect type (income vs expense) based on keywords
+    trans_type = "expense"  # default to expense
+    income_keywords = {
+        "gaji", "salary", "pendapatan", "income", "terima", "penerimaan", 
+        "penghasilan", "masuk", "transfer masuk", "bonus", "thr", "fee", 
+        "honor", "hadiah", "bayaran", "diterima", "dapat", "untung", "profit"
+    }
+    expense_keywords = {
+        "beli", "membeli", "bayar", "belanja", "makan", "buat", "keluar",
+        "pengeluaran", "expense", "spend", "kirim", "transfer keluar"
+    }
+    
+    text_lower = text.lower()
+    # Check income first (more specific)
+    for keyword in income_keywords:
+        if re.search(rf"\b{keyword}\b", text_lower):
+            trans_type = "income"
+            break
+    
+    # If not income, check expense keywords
+    if trans_type == "expense":
+        for keyword in expense_keywords:
+            if re.search(rf"\b{keyword}\b", text_lower):
+                trans_type = "expense"
+                break
+
     # category simple mapping
     category = "other"
     cat_map = {
@@ -80,6 +106,9 @@ def _rule_based_parse(text: str) -> Dict[str, Any]:
         "kopi": "minuman",
         "minum": "minuman",
         "ritel": "belanja",
+        "gaji": "gaji",
+        "salary": "gaji",
+        "pendapatan": "pendapatan",
     }
     for k, v in cat_map.items():
         if re.search(rf"\b{k}\b", text, re.I):
@@ -91,6 +120,7 @@ def _rule_based_parse(text: str) -> Dict[str, Any]:
         "amount": amount,
         "date": date.strftime("%Y-%m-%d") if date else datetime.utcnow().date().strftime("%Y-%m-%d"),
         "category": category,
+        "type": trans_type,
     }
 
 
@@ -109,13 +139,14 @@ def parse_expense_text(text: str) -> Dict[str, Any]:
         try:
             llm = Llama(model_path="./models/qwen2-0_5b-instruct-q8_0.gguf", n_threads=4)
             prompt = (
-                "Kamu adalah AI yang mengekstrak data pengeluaran dari teks berbahasa Indonesia."
+                "Kamu adalah AI yang mengekstrak data transaksi dari teks berbahasa Indonesia."
                 "Berikan output persis dalam JSON berikut tanpa penjelasan tambahan:"
                 "\n{"
-                "\"title\": \"{title}\", \"amount\": {amount}, \"date\": \"{date}\", \"category\": \"{category}\"}"
+                "\"title\": \"{title}\", \"amount\": {amount}, \"date\": \"{date}\", \"category\": \"{category}\", \"type\": \"{type}\"}"
+                "\nType bisa 'income' (pendapatan/terima uang) atau 'expense' (pengeluaran/beli/bayar)."
             )
             # naive defaults
-            defaults = {"title": "", "amount": 0, "date": datetime.utcnow().date().strftime("%Y-%m-%d"), "category": "other"}
+            defaults = {"title": "", "amount": 0, "date": datetime.utcnow().date().strftime("%Y-%m-%d"), "category": "other", "type": "expense"}
             task = f"Teks: \"{text}\"\n\nContoh format JSON: {json.dumps(defaults)}\n\nKeluarkan JSON saja."
             full_prompt = prompt + "\n" + task
             resp = llm(full_prompt, max_tokens=200, temperature=0)
@@ -150,18 +181,4 @@ def parse_expense_text(text: str) -> Dict[str, Any]:
         return _rule_based_parse(text)
     except Exception as e:
         return {"error": f"parse failed: {str(e)}"}
-from llama_cpp import Llama
 
-llm = Llama(model_path="./models/qwen2-0_5b-instruct-q8_0.gguf", n_threads=8)
-
-prompt = """
-Kamu adalah AI yang membantu mengekstrak data dari teks.
-Teks: "saya mau beli nasigoreng 15 ribu"
-Tugas: ekstrak nama makanan dan harga dalam format JSON.
-Contoh output:
-{"produk": "nasi goreng", "harga": 15000}
-Sekarang hasilkan output:
-"""
-
-output = llm(prompt, max_tokens=100, temperature=0, stop=["}"])
-print(output["choices"][0]["text"].strip() + "}")
