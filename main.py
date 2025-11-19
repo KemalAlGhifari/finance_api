@@ -8,7 +8,7 @@ from routers import ai_router
 
 from database import engine
 import models
-from routers import auth_router, category_router, incomes_router, expenses_router, summary_router
+from routers import auth_router, category_router, incomes_router, expenses_router, summary_router, transactions_router
 
 # Create tables (temporary quick start). Remove if you use migrations.
 models.Base = models  # not used but keep
@@ -26,4 +26,5 @@ app.include_router(incomes_router.router)
 app.include_router(expenses_router.router)
 app.include_router(summary_router.router)
 app.include_router(ai_router.router)
+app.include_router(transactions_router.router)
 
