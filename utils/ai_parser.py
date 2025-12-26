@@ -35,150 +35,114 @@ def _normalize_amount(raw: str) -> int | None:
     return int(val)
 
 
-def _rule_based_parse(text: str) -> Dict[str, Any]:
-    text = text.strip()
-    # date detection: keywords like kemarin, hari ini, tanggal YYYY-MM-DD
-    today = datetime.utcnow().date()
-    date = None
-    if re.search(r"\bkemarin\b", text, re.I):
-        date = today - timedelta(days=1)
-    elif re.search(r"\bhari ini\b|\btoday\b", text, re.I):
-        date = today
-    else:
-        # ISO date
-        m = re.search(r"(\d{4}-\d{2}-\d{2})", text)
-        if m:
-            try:
-                date = datetime.strptime(m.group(1), "%Y-%m-%d").date()
-            except Exception:
-                date = None
-
-    # amount detection
-    amount = None
-    # common patterns: '15rb', '15 ribu', '15.000', '15000', '15k', '1.5jt'
-    m_amt = re.search(r"(\d+[\d\.,]*\s*(?:rb|ribu|k|jt|juta)?)(?!\w)", text, re.I)
-    if m_amt:
-        amount = _normalize_amount(m_amt.group(1))
-
-    # title: pick phrase between verbs like 'beli','membeli' and amount/location
-    title = None
-    m_title = re.search(r"(?:beli|membeli|makan|minum|bayar)\s+(.*?)(?:\s+\d|\s+di\s+|$)", text, re.I)
-    if m_title:
-        title = m_title.group(1).strip()
-    else:
-        # fallback: first 4-6 words
-        words = re.findall(r"\w+", text)
-        title = " ".join(words[:6]) if words else text
-
-    # Auto-detect type (income vs expense) based on keywords
-    trans_type = "expense"  # default to expense
-    income_keywords = {
-        "gaji", "salary", "pendapatan", "income", "terima", "penerimaan", 
-        "penghasilan", "masuk", "transfer masuk", "bonus", "thr", "fee", 
-        "honor", "hadiah", "bayaran", "diterima", "dapat", "untung", "profit"
-    }
-    expense_keywords = {
-        "beli", "membeli", "bayar", "belanja", "makan", "buat", "keluar",
-        "pengeluaran", "expense", "spend", "kirim", "transfer keluar"
-    }
-    
-    text_lower = text.lower()
-    # Check income first (more specific)
-    for keyword in income_keywords:
-        if re.search(rf"\b{keyword}\b", text_lower):
-            trans_type = "income"
-            break
-    
-    # If not income, check expense keywords
-    if trans_type == "expense":
-        for keyword in expense_keywords:
-            if re.search(rf"\b{keyword}\b", text_lower):
-                trans_type = "expense"
-                break
-
-    # category simple mapping
-    category = "other"
-    cat_map = {
-        "makan": "makan",
-        "makanan": "makan",
-        "transport": "transport",
-        "bensin": "transport",
-        "kopi": "minuman",
-        "minum": "minuman",
-        "ritel": "belanja",
-        "gaji": "gaji",
-        "salary": "gaji",
-        "pendapatan": "pendapatan",
-    }
-    for k, v in cat_map.items():
-        if re.search(rf"\b{k}\b", text, re.I):
-            category = v
-            break
-
-    return {
-        "title": title,
-        "amount": amount,
-        "date": date.strftime("%Y-%m-%d") if date else datetime.utcnow().date().strftime("%Y-%m-%d"),
-        "category": category,
-        "type": trans_type,
-    }
-
-
 def parse_expense_text(text: str) -> Dict[str, Any]:
-    """Parse Indonesian natural-language expense text into structured dict.
+    """Parse Indonesian natural-language expense text into structured dict using AI model.
 
-    Returns dict with keys: title, amount (int in IDR), date (YYYY-MM-DD), category.
+    Returns dict with keys: title, amount (int in IDR), date (YYYY-MM-DD), category, type.
     On failure returns {'error': 'message'}
     """
     text = (text or "").strip()
     if not text:
         return {"error": "text is empty"}
 
-    # If Llama is available, attempt a deterministic call
-    if _LLAMA_AVAILABLE and Llama is not None:
-        try:
-            llm = Llama(model_path="./models/qwen2-0_5b-instruct-q8_0.gguf", n_threads=4)
-            prompt = (
-                "Kamu adalah AI yang mengekstrak data transaksi dari teks berbahasa Indonesia."
-                "Berikan output persis dalam JSON berikut tanpa penjelasan tambahan:"
-                "\n{"
-                "\"title\": \"{title}\", \"amount\": {amount}, \"date\": \"{date}\", \"category\": \"{category}\", \"type\": \"{type}\"}"
-                "\nType bisa 'income' (pendapatan/terima uang) atau 'expense' (pengeluaran/beli/bayar)."
-            )
-            # naive defaults
-            defaults = {"title": "", "amount": 0, "date": datetime.utcnow().date().strftime("%Y-%m-%d"), "category": "other", "type": "expense"}
-            task = f"Teks: \"{text}\"\n\nContoh format JSON: {json.dumps(defaults)}\n\nKeluarkan JSON saja."
-            full_prompt = prompt + "\n" + task
-            resp = llm(full_prompt, max_tokens=200, temperature=0)
-            out = ""
-            # llama_cpp returns different shapes across versions
-            try:
-                out = resp["choices"][0]["text"]
-            except Exception:
-                out = resp.get("text", "")
+    # Check if AI model is available
+    if not _LLAMA_AVAILABLE or Llama is None:
+        return {"error": "AI model (llama-cpp-python) tidak tersedia. Install dengan: pip install llama-cpp-python"}
 
-            out = out.strip()
-            # try to extract JSON object
-            jmatch = re.search(r"\{.*\}", out, re.S)
-            if jmatch:
-                jstr = jmatch.group(0)
-                try:
-                    parsed = json.loads(jstr)
-                    # normalize amount
-                    if "amount" in parsed:
-                        parsed_amount = _normalize_amount(str(parsed.get("amount")))
-                        parsed["amount"] = parsed_amount if parsed_amount is not None else parsed.get("amount")
-                    return parsed
-                except Exception:
-                    # fall through to fallback
-                    pass
-        except Exception:
-            # Llama call failed; continue to fallback
-            pass
-
-    # fallback rule-based parsing
     try:
-        return _rule_based_parse(text)
+        # Initialize AI model
+        llm = Llama(model_path="./models/DeepSeek-R1-Distill-Qwen-1.5B-Q8_0.gguf", n_threads=4, n_ctx=2048)
+        
+        # Enhanced prompt with detailed instructions and examples
+        today = datetime.utcnow().date().strftime("%Y-%m-%d")
+        prompt = f"""
+            TUGAS:
+            Klasifikasikan transaksi keuangan dari teks Bahasa Indonesia.
+
+            KELUARKAN HANYA JSON VALID.
+            JANGAN tambahkan penjelasan.
+            JANGAN ubah format.
+
+            FORMAT WAJIB:
+            {{"title":"...", "amount":number, "date":"YYYY-MM-DD", "category":"...", "type":"expense|income"}}
+
+            ATURAN KERAS (WAJIB DIPATUHI):
+            - Jika teks mengandung kata: beli, membeli, bayar, belanja, makan, minum, bensin, kopi
+            MAKA type = "expense" (TIDAK BOLEH income)
+            - Jika teks mengandung kata: gaji, terima, pendapatan, bonus, hasil
+            MAKA type = "income" (TIDAK BOLEH expense)
+            - Jika TIDAK JELAS, default type = "expense"
+
+            KATEGORI:
+            - makan → makan
+            - minum/kopi → minuman
+            - bensin/ojek/bus → transport
+            - gaji → gaji
+            - lainnya → other
+
+            NOMINAL:
+            - 15rb=15000
+            - 1.5jt=1500000
+
+            TANGGAL:
+            - hari ini = {today}
+            - kemarin = {(datetime.utcnow().date() - timedelta(days=1)).strftime("%Y-%m-%d")}
+            - jika tidak disebut → {today}
+
+            CONTOH BENAR:
+            Input: saya membeli makan 18rb
+            Output:
+            {{"title":"Membeli makan","amount":18000,"date":"{today}","category":"makan","type":"expense"}}
+
+            Input: terima gaji 5jt
+            Output:
+            {{"title":"Terima gaji","amount":5000000,"date":"{today}","category":"gaji","type":"income"}}
+
+            TEKS:
+            {text}
+
+            JSON:
+            """
+
+
+        # Get AI response
+        resp = llm(prompt, max_tokens=256, temperature=0.1, stop=["\n\n", "Input:", "Teks:"])
+        
+        # Extract response text
+        out = ""
+        try:
+            out = resp["choices"][0]["text"]
+        except Exception:
+            out = resp.get("text", "")
+
+        out = out.strip()
+        
+        # Extract JSON from response
+        jmatch = re.search(r"\{.*?\}", out, re.S)
+        if not jmatch:
+            return {"error": f"AI tidak menghasilkan JSON valid. Response: {out[:100]}"}
+        
+        jstr = jmatch.group(0)
+        parsed = json.loads(jstr)
+        
+       
+        
+        # Ensure all required fields exist with defaults
+        parsed.setdefault("title", text[:50])
+        parsed.setdefault("date", today)
+        parsed.setdefault("category", "other")
+        parsed.setdefault("type", "expense")
+        
+        # Validate date format
+        try:
+            datetime.strptime(parsed["date"], "%Y-%m-%d")
+        except Exception:
+            parsed["date"] = today
+        
+        return parsed
+        
+    except json.JSONDecodeError as e:
+        return {"error": f"AI menghasilkan JSON tidak valid: {str(e)}"}
     except Exception as e:
-        return {"error": f"parse failed: {str(e)}"}
+        return {"error": f"AI parsing gagal: {str(e)}"}
 
