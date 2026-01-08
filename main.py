@@ -10,10 +10,9 @@ from database import engine
 import models
 from routers import auth_router, category_router, incomes_router, expenses_router, summary_router, transactions_router
 
-# Create tables (temporary quick start). Remove if you use migrations.
 models.Base = models  # not used but keep
 models.Base = None
-models  # silence lint
+models  
 
 from database import Base
 Base.metadata.create_all(bind=engine)

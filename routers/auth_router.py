@@ -20,6 +20,35 @@ def register(payload: schemas.UserCreate, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     db.refresh(user)
+    
+    # Create default categories for new user
+    default_categories = [
+        # Income categories
+        {"name": "Gaji", "type": "income"},
+        {"name": "Bonus", "type": "income"},
+        {"name": "Bisnis", "type": "income"},
+        {"name": "Side Job / Freelance", "type": "income"},
+        {"name": "Investasi", "type": "income"},
+        {"name": "Lainnya", "type": "income"},
+        # Expense categories
+        {"name": "Makanan", "type": "expense"},
+        {"name": "Transport", "type": "expense"},
+        {"name": "Belanja Bulanan", "type": "expense"},
+        {"name": "Tagihan (Listrik, Air, Internet)", "type": "expense"},
+        {"name": "Cicilan", "type": "expense"},
+        {"name": "Lainnya", "type": "expense"},
+    ]
+    
+    for cat_data in default_categories:
+        category = models.Category(
+            user_id=user.id,
+            name=cat_data["name"],
+            type=models.CategoryType[cat_data["type"]]
+        )
+        db.add(category)
+    
+    db.commit()
+    
     return user
 
 @router.post("/login", response_model=schemas.Token)
